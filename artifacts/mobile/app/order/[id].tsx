@@ -164,11 +164,64 @@ export default function OrderDetailScreen() {
               </View>
             ))}
             <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>Total</Text>
-              <Text style={styles.totalAmount}>${totalAmount.toFixed(2)}</Text>
+              <Text style={styles.totalLabel}>Material Subtotal</Text>
+              <Text style={styles.totalAmount}>
+                ${order.fees ? order.fees.materialSubtotal.toFixed(2) : totalAmount.toFixed(2)}
+              </Text>
             </View>
           </View>
         </View>
+
+        {/* Fee Breakdown (if fees exist on order) */}
+        {order.fees && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Delivery Fees</Text>
+            <View style={styles.itemsCard}>
+              <View style={styles.itemRow}>
+                <Text style={{ flex: 1, fontSize: 14, fontFamily: "Inter_400Regular", color: C.textSecondary }}>Delivery Fee</Text>
+                <Text style={{ fontSize: 14, fontFamily: "Inter_600SemiBold", color: C.text }}>
+                  {order.fees.deliveryDiscount > 0 ? "FREE" : `$${order.fees.baseFee.toFixed(2)}`}
+                </Text>
+              </View>
+              {order.fees.distanceFee > 0 && (
+                <>
+                  <View style={styles.itemDivider} />
+                  <View style={styles.itemRow}>
+                    <Text style={{ flex: 1, fontSize: 14, fontFamily: "Inter_400Regular", color: C.textSecondary }}>Distance Fee</Text>
+                    <Text style={{ fontSize: 14, fontFamily: "Inter_600SemiBold", color: C.text }}>${order.fees.distanceFee.toFixed(2)}</Text>
+                  </View>
+                </>
+              )}
+              <View style={styles.itemDivider} />
+              <View style={styles.itemRow}>
+                <Text style={{ flex: 1, fontSize: 14, fontFamily: "Inter_400Regular", color: C.textSecondary }}>Service Fee (5%)</Text>
+                <Text style={{ fontSize: 14, fontFamily: "Inter_600SemiBold", color: C.text }}>${order.fees.serviceFee.toFixed(2)}</Text>
+              </View>
+              {order.fees.rushFee > 0 && (
+                <>
+                  <View style={styles.itemDivider} />
+                  <View style={styles.itemRow}>
+                    <Text style={{ flex: 1, fontSize: 14, fontFamily: "Inter_400Regular", color: C.primary }}>Rush Delivery</Text>
+                    <Text style={{ fontSize: 14, fontFamily: "Inter_600SemiBold", color: C.primary }}>+${order.fees.rushFee.toFixed(2)}</Text>
+                  </View>
+                </>
+              )}
+              {order.fees.deliveryDiscount > 0 && (
+                <>
+                  <View style={styles.itemDivider} />
+                  <View style={styles.itemRow}>
+                    <Text style={{ flex: 1, fontSize: 14, fontFamily: "Inter_400Regular", color: C.success }}>Large Order Discount</Text>
+                    <Text style={{ fontSize: 14, fontFamily: "Inter_600SemiBold", color: C.success }}>-${order.fees.deliveryDiscount.toFixed(2)}</Text>
+                  </View>
+                </>
+              )}
+              <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>Order Total</Text>
+                <Text style={styles.totalAmount}>${order.fees.grandTotal.toFixed(2)}</Text>
+              </View>
+            </View>
+          </View>
+        )}
       </ScrollView>
 
       {canCancel && (

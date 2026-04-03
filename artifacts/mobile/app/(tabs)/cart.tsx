@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Platform,
   TextInput,
   ScrollView,
+  Switch,
 } from "react-native";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -21,6 +22,31 @@ import Colors from "@/constants/colors";
 
 const C = Colors.light;
 
+// ─── Fee Calculation (mirrors backend logic) ─────────────────────────
+const BASE_DELIVERY_FEE = 35;
+const INCLUDED_MILES = 10;
+const PER_MILE_FEE = 2;
+const SERVICE_FEE_RATE = 0.05;
+const MIN_SERVICE_FEE = 2;
+const RUSH_FEE_AMOUNT = 20;
+const FREE_DELIVERY_THRESHOLD = 750;
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function calcFees(subtotal: number, distance: number, rush: boolean) {
+  const baseFee = BASE_DELIVERY_FEE;
+  const extraMiles = Math.max(0, distance - INCLUDED_MILES);
+  const distanceFee = round2(extraMiles * PER_MILE_FEE);
+  const serviceFee = round2(Math.max(MIN_SERVICE_FEE, subtotal * SERVICE_FEE_RATE));
+  const rushFee = rush ? RUSH_FEE_AMOUNT : 0;
+  const deliveryDiscount = subtotal >= FREE_DELIVERY_THRESHOLD ? baseFee : 0;
+  const totalFees = round2(baseFee + distanceFee + serviceFee + rushFee - deliveryDiscount);
+  const grandTotal = round2(subtotal + totalFees);
+  return { baseFee, distanceFee, serviceFee, rushFee, deliveryDiscount, totalFees, grandTotal };
+}
+
 export default function CartScreen() {
   const insets = useSafeAreaInsets();
   const { items, removeItem, updateQuantity, clearCart, totalAmount } = useCart();
@@ -30,6 +56,13 @@ export default function CartScreen() {
   const [jobSiteAddress, setJobSiteAddress] = useState("");
   const [deliveryNotes, setDeliveryNotes] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [distanceMiles, setDistanceMiles] = useState("");
+  const [isRushDelivery, setIsRushDelivery] = useState(false);
+
+  const fees = useMemo(
+    () => calcFees(totalAmount, parseFloat(distanceMiles) || 0, isRushDelivery),
+    [totalAmount, distanceMiles, isRushDelivery]
+  );
 
   const topPadding = insets.top + (Platform.OS === "web" ? 67 : 0);
 
@@ -41,7 +74,9 @@ export default function CartScreen() {
         jobSiteAddress,
         deliveryNotes: deliveryNotes || undefined,
         items: items.map((i) => ({ materialId: i.materialId, quantity: i.quantity })),
-      }),
+        distanceMiles: parseFloat(distanceMiles) || 0,
+        isRushDelivery,
+      } as any),
     onSuccess: (order) => {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       clearCart();
@@ -112,8 +147,88 @@ export default function CartScreen() {
         ))}
 
         <View style={styles.totalSection}>
-          <Text style={styles.totalLabel}>Subtotal</Text>
+          <Text style={styles.totalLabel}>Material Subtotal</Text>
           <Text style={styles.totalAmount}>${totalAmount.toFixed(2)}</Text>
+        </View>
+
+        <View style={styles.divider} />
+
+        {/* ─── Delivery Options ─── */}
+        <View style={styles.formSection}>
+          <Text style={styles.formTitle}>Delivery Options</Text>
+
+          <Text style={styles.fieldLabel}>Distance to Job Site (miles)</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g. 8"
+            placeholderTextColor={C.textSecondary}
+            value={distanceMiles}
+            onChangeText={(v) => setDistanceMiles(v.replace(/[^0-9.]/g, ""))}
+            keyboardType="decimal-pad"
+          />
+
+          <View style={styles.rushRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rushLabel}>Rush Delivery (&lt;1 hour)</Text>
+              <Text style={styles.rushSub}>+${RUSH_FEE_AMOUNT.toFixed(2)} priority surcharge</Text>
+            </View>
+            <Switch
+              value={isRushDelivery}
+              onValueChange={(v) => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsRushDelivery(v); }}
+              trackColor={{ false: C.border, true: C.primary + "80" }}
+              thumbColor={isRushDelivery ? C.primary : "#f4f3f4"}
+            />
+          </View>
+        </View>
+
+        {/* ─── Fee Breakdown ─── */}
+        <View style={styles.feeSection}>
+          <Text style={styles.formTitle}>Fee Breakdown</Text>
+
+          <View style={styles.feeRow}>
+            <Text style={styles.feeLabel}>Delivery Fee (first {INCLUDED_MILES} mi included)</Text>
+            <Text style={styles.feeValue}>
+              {fees.deliveryDiscount > 0 ? "FREE" : `$${fees.baseFee.toFixed(2)}`}
+            </Text>
+          </View>
+
+          {fees.distanceFee > 0 && (
+            <View style={styles.feeRow}>
+              <Text style={styles.feeLabel}>Distance Fee ({(parseFloat(distanceMiles) - INCLUDED_MILES).toFixed(1)} extra mi × ${PER_MILE_FEE})</Text>
+              <Text style={styles.feeValue}>${fees.distanceFee.toFixed(2)}</Text>
+            </View>
+          )}
+
+          <View style={styles.feeRow}>
+            <Text style={styles.feeLabel}>Service Fee (5%)</Text>
+            <Text style={styles.feeValue}>${fees.serviceFee.toFixed(2)}</Text>
+          </View>
+
+          {fees.rushFee > 0 && (
+            <View style={styles.feeRow}>
+              <Text style={styles.feeLabel}>Rush Delivery</Text>
+              <Text style={[styles.feeValue, { color: C.primary }]}>+${fees.rushFee.toFixed(2)}</Text>
+            </View>
+          )}
+
+          {fees.deliveryDiscount > 0 && (
+            <View style={styles.feeRow}>
+              <Text style={[styles.feeLabel, { color: C.success }]}>Large Order Discount</Text>
+              <Text style={[styles.feeValue, { color: C.success }]}>-${fees.deliveryDiscount.toFixed(2)}</Text>
+            </View>
+          )}
+
+          <View style={styles.feeDivider} />
+
+          <View style={styles.feeRow}>
+            <Text style={styles.feeTotalLabel}>Total Fees</Text>
+            <Text style={styles.feeTotalValue}>${fees.totalFees.toFixed(2)}</Text>
+          </View>
+        </View>
+
+        <View style={styles.grandTotalSection}>
+          <Text style={styles.grandTotalLabel}>Order Total</Text>
+          <Text style={styles.grandTotalAmount}>${fees.grandTotal.toFixed(2)}</Text>
         </View>
 
         <View style={styles.divider} />
@@ -159,7 +274,7 @@ export default function CartScreen() {
         >
           <MaterialCommunityIcons name="truck-delivery" size={20} color="#fff" />
           <Text style={styles.orderButtonText}>
-            {isPending ? "Placing Order..." : `Place Order · $${totalAmount.toFixed(2)}`}
+            {isPending ? "Placing Order..." : `Place Order · $${fees.grandTotal.toFixed(2)}`}
           </Text>
         </TouchableOpacity>
       </ScrollView>
@@ -356,5 +471,85 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontFamily: "Inter_600SemiBold",
     color: "#fff",
+  },
+  rushRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 14,
+    backgroundColor: C.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  rushLabel: {
+    fontSize: 15,
+    fontFamily: "Inter_500Medium",
+    color: C.text,
+  },
+  rushSub: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: C.textSecondary,
+    marginTop: 2,
+  },
+  feeSection: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    gap: 10,
+  },
+  feeRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  feeLabel: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: C.textSecondary,
+    flex: 1,
+  },
+  feeValue: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: C.text,
+  },
+  feeDivider: {
+    height: 1,
+    backgroundColor: C.border,
+    marginVertical: 6,
+  },
+  feeTotalLabel: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: C.text,
+  },
+  feeTotalValue: {
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
+    color: C.text,
+  },
+  grandTotalSection: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: C.primary + "10",
+    marginHorizontal: 16,
+    borderRadius: 16,
+    marginBottom: 12,
+  },
+  grandTotalLabel: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    color: C.text,
+  },
+  grandTotalAmount: {
+    fontSize: 26,
+    fontFamily: "Inter_700Bold",
+    color: C.primary,
   },
 });

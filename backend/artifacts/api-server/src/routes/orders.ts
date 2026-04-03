@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db, materialsTable, ordersTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
+import { calculateDeliveryFees, type FeeBreakdown } from "../lib/deliveryFees";
 
 const router: IRouter = Router();
 
@@ -56,7 +57,15 @@ router.get("/orders/:id", async (req, res) => {
 
 router.post("/orders", async (req, res) => {
   try {
-    const { consumerId, jobSiteAddress, jobSiteName, deliveryNotes, items: rawItems } = req.body;
+    const {
+      consumerId,
+      jobSiteAddress,
+      jobSiteName,
+      deliveryNotes,
+      items: rawItems,
+      distanceMiles,
+      isRushDelivery,
+    } = req.body;
 
     if (!consumerId || !jobSiteAddress || !jobSiteName || !rawItems?.length) {
       return res.status(400).json({ error: "Missing required fields" });
@@ -79,7 +88,16 @@ router.post("/orders", async (req, res) => {
       };
     });
 
-    const totalAmount = items.reduce((sum: number, item: { subtotal: number }) => sum + item.subtotal, 0).toFixed(2);
+    const materialSubtotal = items.reduce((sum: number, item: { subtotal: number }) => sum + item.subtotal, 0);
+
+    // Calculate delivery fees
+    const fees: FeeBreakdown = calculateDeliveryFees(
+      materialSubtotal,
+      typeof distanceMiles === "number" ? distanceMiles : parseFloat(distanceMiles) || 0,
+      !!isRushDelivery,
+    );
+
+    const totalAmount = fees.grandTotal.toFixed(2);
 
     const [order] = await db.insert(ordersTable).values({
       consumerId,
@@ -91,7 +109,11 @@ router.post("/orders", async (req, res) => {
       totalAmount,
     }).returning();
 
-    res.status(201).json({ ...order, totalAmount: parseFloat(order.totalAmount) });
+    res.status(201).json({
+      ...order,
+      totalAmount: parseFloat(order.totalAmount),
+      fees,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to create order" });
