@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
+import * as WebBrowser from "expo-web-browser";
 import { createOrder } from "@workspace/api-client-react";
 import { useCart } from "@/context/CartContext";
 import { useApp } from "@/context/AppContext";
@@ -66,22 +67,69 @@ export default function CartScreen() {
 
   const topPadding = insets.top + (Platform.OS === "web" ? 67 : 0);
 
+  const BASE_URL = process.env.EXPO_PUBLIC_DOMAIN
+    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
+    : "";
+  const API_KEY = process.env.EXPO_PUBLIC_API_KEY ?? "";
+
   const { mutate: placeOrder, isPending } = useMutation({
-    mutationFn: () =>
-      createOrder({
-        consumerId: user?.id ?? "",
-        jobSiteName,
-        jobSiteAddress,
-        deliveryNotes: deliveryNotes || undefined,
-        items: items.map((i) => ({ materialId: i.materialId, quantity: i.quantity })),
-        distanceMiles: parseFloat(distanceMiles) || 0,
-        isRushDelivery,
-      } as any),
-    onSuccess: (order) => {
+    mutationFn: async () => {
+      // Create Stripe Checkout Session via our API
+      const response = await fetch(`${BASE_URL}/api/payments/create-checkout`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": API_KEY,
+        },
+        body: JSON.stringify({
+          consumerId: user?.id ?? "",
+          jobSiteName,
+          jobSiteAddress,
+          deliveryNotes: deliveryNotes || undefined,
+          items: items.map((i) => ({ materialId: i.materialId, quantity: i.quantity })),
+          distanceMiles: parseFloat(distanceMiles) || 0,
+          isRushDelivery,
+          successUrl: `${BASE_URL}/api/payments/success`,
+          cancelUrl: `${BASE_URL}/api/payments/cancel`,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to create checkout session");
+      }
+
+      return response.json();
+    },
+    onSuccess: async (data) => {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      clearCart();
-      queryClient.invalidateQueries({ queryKey: ["orders"] });
-      router.push({ pathname: "/order/[id]", params: { id: order.id } });
+
+      if (data.checkoutUrl) {
+        // Open Stripe Checkout in browser
+        const result = await WebBrowser.openBrowserAsync(data.checkoutUrl);
+
+        // After returning from Stripe, confirm payment and navigate
+        if (result.type === "cancel") {
+          // User closed the browser — payment may or may not have completed
+          // Check payment status
+          try {
+            const statusRes = await fetch(
+              `${BASE_URL}/api/payments/status/${data.orderId}`,
+              { headers: { "x-api-key": API_KEY } },
+            );
+            const statusData = await statusRes.json();
+            if (statusData.isPaid) {
+              clearCart();
+              queryClient.invalidateQueries({ queryKey: ["orders"] });
+              router.push({ pathname: "/order/[id]", params: { id: data.orderId } });
+            }
+          } catch {}
+        } else {
+          // Browser dismissed after success redirect
+          clearCart();
+          queryClient.invalidateQueries({ queryKey: ["orders"] });
+          router.push({ pathname: "/order/[id]", params: { id: data.orderId } });
+        }
+      }
     },
     onError: () => {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
